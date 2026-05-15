@@ -1,0 +1,16 @@
+# Hand-picked seed list for the first proof-of-concept deck.
+hund
+kat
+hus
+bil
+være
+have
+gå
+spise
+smuk
+finit
+tak
+ja
+nej
+hej
+godmorgen

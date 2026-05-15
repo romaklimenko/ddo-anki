@@ -51,7 +51,8 @@ def test_hus_has_nested_meanings() -> None:
     assert e is not None
     numbers = [m.number for m in e.meanings]
     assert "1" in numbers
-    assert any("." in n for n in numbers), f"expected sub-meanings, got {numbers}"
+    # DDO uses 1.a / 1.b / 1.c for sub-meanings (not 1.1).
+    assert "1.a" in numbers, f"expected DDO-style sub-numbering, got {numbers}"
 
 
 def test_hund_has_homonym_marker() -> None:

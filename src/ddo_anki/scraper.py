@@ -271,6 +271,18 @@ def _parse_pronunciations(box: Tag | None) -> list[Pronunciation]:
 _BETYDNING_RE = re.compile(r"^betydning-(.+)$")
 
 
+def _meaning_visible_number(box: Tag) -> str:
+    """The displayed numbering (e.g. '1.', '1.a') sits as a sibling of the
+    `definitionIndent` that wraps this box. Walk up and back to find it."""
+    indent = box.parent
+    if indent is None or "definitionIndent" not in (indent.get("class") or []):
+        return ""
+    sib = indent.find_previous_sibling("div", class_="definitionNumber")
+    if sib is None:
+        return ""
+    return _clean(sib.get_text()).rstrip(".")
+
+
 def _parse_meanings(container: Tag | None) -> list[Meaning]:
     if container is None:
         return []
@@ -280,7 +292,8 @@ def _parse_meanings(container: Tag | None) -> list[Meaning]:
         m = _BETYDNING_RE.match(str(bid))
         if not m:
             continue
-        number = m.group(1).replace("-", ".")
+        visible = _meaning_visible_number(box)
+        number = visible or m.group(1).replace("-", ".")
         definition = box.select_one(".definition")
         if definition is None:
             continue
