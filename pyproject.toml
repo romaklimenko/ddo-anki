@@ -1,0 +1,30 @@
+[project]
+name = "ddo-anki"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "genanki>=0.13.1",
+    "httpx>=0.28.1",
+    "lxml>=6.1.0",
+    "rich>=15.0.0",
+]
+
+[project.scripts]
+ddo-anki = "ddo_anki.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ddo_anki"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
