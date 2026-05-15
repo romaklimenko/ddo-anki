@@ -13,9 +13,16 @@ venv/
 samples/
 cache/
 out/
+logs/
 words/full/
 words/all_urls.txt
 *.apkg
 *.mp3
 *.jsonl
 *.gz
+*.log
+
+# Editor / harness state
+.claude/
+*.lock
+!uv.lock
