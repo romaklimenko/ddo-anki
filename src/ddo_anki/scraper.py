@@ -18,11 +18,12 @@ primary match for the search query).
 """
 from __future__ import annotations
 
+import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -62,6 +63,25 @@ class Entry:
     @property
     def display_word(self) -> str:
         return f"{self.word}{self.homonym}" if self.homonym else self.word
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Entry":
+        prons = [Pronunciation(**p) for p in d.get("pronunciations", [])]
+        meanings = [Meaning(**m) for m in d.get("meanings", [])]
+        return cls(
+            query=d.get("query", ""),
+            word=d["word"],
+            homonym=d.get("homonym", ""),
+            word_type=d.get("word_type", ""),
+            inflection=d.get("inflection", ""),
+            etymology=d.get("etymology", ""),
+            pronunciations=prons,
+            meanings=meanings,
+            source_url=d.get("source_url", ""),
+        )
 
     @property
     def short_type(self) -> str:

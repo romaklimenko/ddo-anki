@@ -9,10 +9,13 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# Project artifacts
+# Project artifacts (NEVER commit - DDO data is licensed)
 samples/
 cache/
 out/
 words/full/
+words/all_urls.txt
 *.apkg
 *.mp3
+*.jsonl
+*.gz
