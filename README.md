@@ -63,20 +63,47 @@ Each DDO entry yields a structured `Entry`:
 - **Idioms / fixed expressions.** They appear inside an entry as further `match` spans but are not extracted as separate cards yet.
 - **No fuzzy match.** If a word isn't found on DDO the CLI logs a warning and skips it. Plug `--no-audio` to keep iteration cheap while you clean up a wordlist.
 
-## Scaling to the full ~90K-word DDO corpus
+## Scraping the full ~104K-word DDO corpus
 
-This POC is built so the heavy step (scraping + audio download) is the only thing that has to scale. A plan that should work without irritating ordnet.dk:
+DDO publishes an XML sitemap (`https://ordnet.dk/sitemap_index.xml`) that lists every entry URL — **104,153** as of May 2026, with homonyms disambiguated as `query=hund,1`, `query=hund,2`, …
 
-1. **Get a seed wordlist.** DDO doesn't expose a public sitemap, but reasonable options:
-   - **Frequency-ordered list** from KorpusDK or the Leipzig Danish corpus — best vocabulary value per card. Start with the top 5k / 20k / 50k and stop wherever cards stop being useful.
-   - **Hunspell `da_DK.dic`** — ~250k forms, broader than DDO; ~30 % won't resolve, which is fine.
-   - **DDO's A–Å index pages** (`https://ordnet.dk/ddo/leksikon/...`) — paginated, scrapeable to extract `entry_id` for every headword.
-2. **Cache and parallelise.** The current `DdoScraper` already caches and rate-limits per-instance. For a full run:
-   - Spawn ~4 worker processes, each with its own scraper and `delay=0.5–1.0` — effective load ~5–8 req/s.
-   - Estimated wall time: ~5–8 h for HTML, similar again for audio. Each entry is ~5–50 KB HTML and 30–80 KB per mp3, so ~30–40 GB cache total.
-3. **Resume-able batches.** Split the wordlist into 1k-word chunks and write one `.apkg` per chunk (or one master deck after all chunks are done). The cache makes re-runs idempotent.
-4. **Use `entry_id` for homonyms.** Once the index-page scrape yields all `entry_id`s, parse each by id (`?entry_id=11013058`) instead of by query string — this also fetches every homonym.
-5. **Be polite.** ordnet.dk is run by Det Danske Sprog- og Litteraturselskab (a public research body); avoid concurrent floods, set a meaningful User-Agent, and consider emailing them if you intend to redistribute a full deck publicly.
+### Three-step pipeline
+
+```bash
+# 1. Pull the sitemap and dump all entry URLs to cache/sitemap/ddo_all_urls.txt
+uv run python fetch_sitemap.py
+cp cache/sitemap/ddo_all_urls.txt words/all_urls.txt
+
+# 2. Async-scrape every URL into cache/entries.jsonl (resumable)
+uv run ddo-anki bulk-scrape words/all_urls.txt --concurrency 6
+
+# 3. Async-download every referenced mp3 into cache/audio/<shard>/
+uv run ddo-anki bulk-audio
+
+# 4. Build one .apkg from the JSONL + audio cache
+uv run ddo-anki bulk-build -o out/ddo-full.apkg
+```
+
+### What the bulk scraper does
+
+- **Concurrency:** semaphore-capped (default 5; observed ~20 req/s with concurrency 6 on a home connection).
+- **Retry/backoff:** 429 and 5xx responses get an exponential backoff that honors the `Retry-After` header.
+- **Resume:** each URL produces exactly one JSONL line, keyed by URL. Reruns skip URLs already present, so you can ctrl-C and pick up where you left off.
+- **Failures don't refetch:** a 404 or parse error gets recorded as a JSONL line with `entry: null`, so the run never retries hopeless URLs.
+- **Audio is sharded:** mp3s are stored as `cache/audio/<first-4-chars>/<id>.mp3` to keep any single directory under ~1k entries.
+
+### Rough sizings
+
+| | Count | Disk |
+|---|---|---|
+| Entry URLs | 104,153 | — |
+| JSONL after scrape | ~104k lines | ~150 MB |
+| Audio mp3s | ~150k unique | ~6 GB |
+| Final `.apkg` | 1 file | ~5–8 GB |
+
+### Polite-crawling notes
+
+`https://ordnet.dk/robots.txt` blanket-disallows unknown bots but ordnet.dk publishes the sitemap precisely for legitimate crawling. The pipeline ships a clear UA (`ddo-anki/0.1`), runs single-digit-concurrency, and backs off on 429s. If you intend to redistribute the resulting deck, email DSL first — the dictionary data is © Det Danske Sprog- og Litteraturselskab.
 
 ## Development
 
