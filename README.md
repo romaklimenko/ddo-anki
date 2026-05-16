@@ -63,6 +63,48 @@ Each step is independently resumable: ctrl-C any time and re-run — the JSONL a
 
 ---
 
+## Using the deck in Anki
+
+### First import
+
+**Anki Desktop** (Mac / Windows / Linux):
+
+1. `File → Import` (or drag-and-drop the `.apkg` onto the main window).
+2. Pick `out/ddo-full.apkg`. The import-options dialog appears — defaults are fine; just confirm **"Update existing notes when import conflicts"** is on (it is by default).
+3. Click Import. For ~84k cards with audio, expect a **5–15 minute import** and the collection growing by ~5–8 GB.
+
+**AnkiDroid / AnkiMobile:** copy the `.apkg` to the device, open it from your file manager, and it routes into Anki.
+
+### Updating when new words arrive (or when you tweak the parser)
+
+```bash
+uv run python fetch_sitemap.py                       # refresh URL list (~1s)
+cp cache/sitemap/ddo_all_urls.txt words/all_urls.txt
+uv run ddo-anki bulk-scrape words/all_urls.txt       # resume - only NEW URLs fetched
+uv run ddo-anki bulk-retry  words/all_urls.txt       # recover any 503s
+uv run ddo-anki bulk-audio                           # only NEW mp3s downloaded
+uv run ddo-anki bulk-build -o out/ddo-full.apkg      # rebuild deck
+# then File -> Import the new .apkg in Anki Desktop
+```
+
+What happens in Anki on re-import (notes are keyed by a GUID derived from `word + homonym + word_type`):
+
+- **Existing cards (same `word + homonym + word_type`):** fields are refreshed — updated meanings, fixed typos, new examples. **Your reviews, ease, intervals, due dates, and study stats are all preserved.**
+- **New entries:** added as fresh cards in the "new" queue.
+- **Removed entries** (rare — DDO occasionally retires obsolete entries): Anki's import only adds/updates; it never deletes. You'd have to delete them manually if you care. For a growing dictionary this is almost never an issue.
+
+You can also use re-imports to iterate on the deck template / parser: rebuild + re-import, and your existing reviews carry over while the card content gets refreshed.
+
+### Syncing through AnkiWeb (caveat)
+
+AnkiWeb caps synced media at ~100 MB, far below our ~6 GB of mp3s. Three workable options:
+
+- **Self-host an Anki sync server** (e.g., the official Rust `anki-sync-server`) — full sync including media. This is the cleanest path if you want audio on every device.
+- **Sync without media** — cards sync to AnkiWeb / AnkiDroid / AnkiMobile, audio stays on your desktop only.
+- **Build a no-audio variant** — skip `bulk-audio` before `bulk-build`, or use `--no-audio` for the small `build` flow. The resulting `.apkg` is a few hundred MB and syncs everywhere; cards have IPA and meanings but no playback.
+
+---
+
 ## Subcommand reference
 
 ```
@@ -180,25 +222,7 @@ Internally:
 
 Idempotent: each retry pass only touches URLs that are still failing. Run it as many times as you like.
 
-### Picking up new DDO entries later
-
-DDO updates its sitemap when new headwords are added. To enrich an existing deck:
-
-```bash
-uv run python fetch_sitemap.py              # refresh URL list
-cp cache/sitemap/ddo_all_urls.txt words/all_urls.txt
-uv run ddo-anki bulk-scrape words/all_urls.txt   # resume - only new URLs fetched
-uv run ddo-anki bulk-audio                       # audio for new entries
-uv run ddo-anki bulk-build -o out/ddo-full.apkg  # rebuild deck
-```
-
-Then re-import the `.apkg` in Anki. Notes are keyed by a GUID derived from `(word, homonym, word_type)`, so Anki dedupes automatically:
-
-- **Matching notes** have their fields updated and your **study progress is preserved**.
-- **New entries** get added as new cards.
-- **Removed entries** are not deleted — Anki only adds and updates on import. Remove them manually if you want.
-
-This also means you can iterate on the parser: rebuild + re-import, and your existing reviews carry over while the card content gets refreshed.
+> **Picking up new DDO entries / updating Anki:** see the **["Using the deck in Anki"](#using-the-deck-in-anki)** section above for the full re-import flow.
 
 ---
 
