@@ -84,6 +84,41 @@ uv run ddo-anki bulk-audio
 uv run ddo-anki bulk-build -o out/ddo-full.apkg
 ```
 
+### Retrying transient failures
+
+A real DDO run produces some retryable failures - typically `http_503`
+bursts when the dictionary's app server is briefly overloaded. The
+JSONL records every URL (success or failure), so a plain re-run won't
+retry them.
+
+```bash
+# Drops every 5xx / 429 / network-error record from the JSONL,
+# then re-fetches just those URLs at a gentler concurrency.
+uv run ddo-anki bulk-retry words/all_urls.txt
+```
+
+The retry pass uses `--concurrency 3` and `--max-retries 8` by default
+to ride out longer busy windows. Run it as many times as you like -
+it's idempotent.
+
+### Picking up new DDO entries later
+
+DDO updates its sitemap when new headwords are added. To enrich an
+existing deck:
+
+```bash
+uv run python fetch_sitemap.py              # refresh URL list
+cp cache/sitemap/ddo_all_urls.txt words/all_urls.txt
+uv run ddo-anki bulk-scrape words/all_urls.txt   # resume - only new URLs fetched
+uv run ddo-anki bulk-audio                       # audio for new entries
+uv run ddo-anki bulk-build -o out/ddo-full.apkg  # rebuild deck
+```
+
+Then re-import the `.apkg` in Anki. Notes are keyed by a GUID derived
+from `(word, homonym, word_type)`, so Anki dedupes automatically:
+**matching notes have their fields updated and your study progress
+preserved; new entries get added as new cards.**
+
 ### What the bulk scraper does
 
 - **Concurrency:** semaphore-capped (default 5; observed ~20 req/s with concurrency 6 on a home connection).

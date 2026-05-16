@@ -30,6 +30,22 @@ def _slug(url: str) -> str:
     return url.rsplit("?query=", 1)[-1] if "?query=" in url else url
 
 
+# Transient HTTP statuses worth re-fetching. -1 = our sentinel for
+# network errors that exhausted in-request retries.
+RETRYABLE_STATUSES: frozenset[int] = frozenset({-1, 408, 425, 429, 500, 502, 503, 504})
+
+
+def is_retryable(rec: dict) -> bool:
+    """Should this JSONL record be re-fetched on a retry pass?"""
+    status = rec.get("status", 0)
+    if status in RETRYABLE_STATUSES:
+        return True
+    if status == 200 and rec.get("error"):
+        # Parse errors are retryable - we may have fixed the parser.
+        return True
+    return False
+
+
 def read_done_urls(jsonl_path: Path) -> set[str]:
     """Pull the set of already-processed URLs from a JSONL file."""
     if not jsonl_path.exists():
@@ -48,6 +64,44 @@ def read_done_urls(jsonl_path: Path) -> set[str]:
             if url:
                 done.add(url)
     return done
+
+
+def prune_retryable(jsonl_path: Path) -> dict[str, int]:
+    """Rewrite the JSONL in place, dropping every record that should be retried.
+
+    Returns counts of {kept, dropped, total_lines}. Last-write-wins per URL,
+    so even if the same URL appears multiple times only the latest verdict
+    matters.
+    """
+    if not jsonl_path.exists():
+        return {"kept": 0, "dropped": 0, "total_lines": 0}
+
+    latest: dict[str, dict] = {}
+    total_lines = 0
+    with jsonl_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            total_lines += 1
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            url = rec.get("url")
+            if url:
+                latest[url] = rec
+
+    kept = {url: rec for url, rec in latest.items() if not is_retryable(rec)}
+    dropped = len(latest) - len(kept)
+
+    # Write to a temp file, then atomic-rename.
+    tmp = jsonl_path.with_suffix(jsonl_path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for rec in kept.values():
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    tmp.replace(jsonl_path)
+    return {"kept": len(kept), "dropped": dropped, "total_lines": total_lines}
 
 
 async def _fetch_one(
@@ -90,6 +144,7 @@ async def scrape_bulk(
     *,
     concurrency: int = 5,
     log_every: int = 200,
+    max_retries: int = 5,
 ) -> dict[str, int]:
     """Scrape every URL, parse it, and append one JSON line per entry."""
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +168,7 @@ async def scrape_bulk(
         async with httpx.AsyncClient(
             headers=headers, timeout=timeout, limits=limits, follow_redirects=True, http2=False
         ) as client:
-            tasks = [_fetch_one(client, sem, url) for url in todo]
+            tasks = [_fetch_one(client, sem, url, max_retries=max_retries) for url in todo]
             processed = 0
             for fut in asyncio.as_completed(tasks):
                 url, status, body = await fut

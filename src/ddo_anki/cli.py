@@ -20,6 +20,7 @@ from .bulk import (
     collect_audio_urls,
     download_audio,
     iter_jsonl_entries,
+    prune_retryable,
     scrape_bulk,
     _audio_path,
 )
@@ -99,9 +100,49 @@ def cmd_bulk_scrape(args: argparse.Namespace) -> int:
     if args.limit:
         urls = urls[: args.limit]
     stats = asyncio.run(
-        scrape_bulk(urls, args.jsonl, concurrency=args.concurrency, log_every=args.log_every)
+        scrape_bulk(
+            urls,
+            args.jsonl,
+            concurrency=args.concurrency,
+            log_every=args.log_every,
+            max_retries=args.max_retries,
+        )
     )
     console.print(f"[green]Done.[/green] stats={stats}")
+    return 0
+
+
+def cmd_bulk_retry(args: argparse.Namespace) -> int:
+    """Prune retryable failures from the JSONL, then re-scrape just those."""
+    if not args.urls_file.exists():
+        console.print(f"[red]URL list not found: {args.urls_file}[/red]")
+        return 2
+    if not args.jsonl.exists():
+        console.print(f"[red]JSONL not found: {args.jsonl}[/red]")
+        return 2
+
+    console.print(f"Pruning retryable failures from [cyan]{args.jsonl}[/cyan] ...")
+    prune_stats = prune_retryable(args.jsonl)
+    console.print(
+        f"  kept={prune_stats['kept']:,}  "
+        f"dropped={prune_stats['dropped']:,}  "
+        f"total_lines_seen={prune_stats['total_lines']:,}"
+    )
+    if prune_stats["dropped"] == 0:
+        console.print("[green]Nothing to retry.[/green]")
+        return 0
+
+    urls = [u.strip() for u in args.urls_file.read_text(encoding="utf-8").splitlines() if u.strip()]
+    stats = asyncio.run(
+        scrape_bulk(
+            urls,
+            args.jsonl,
+            concurrency=args.concurrency,
+            log_every=args.log_every,
+            max_retries=args.max_retries,
+        )
+    )
+    console.print(f"[green]Retry done.[/green] stats={stats}")
     return 0
 
 
@@ -174,7 +215,19 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--concurrency", type=int, default=5)
     ps.add_argument("--log-every", type=int, default=200)
     ps.add_argument("--limit", type=int, default=0, help="Process only the first N URLs (0 = all)")
+    ps.add_argument("--max-retries", type=int, default=5, help="Per-URL retry budget on 429/5xx")
     ps.set_defaults(func=cmd_bulk_scrape)
+
+    pr = sub.add_parser(
+        "bulk-retry",
+        help="Re-scrape every URL whose JSONL record is a retryable failure (429/5xx/network).",
+    )
+    pr.add_argument("urls_file", type=Path, help="Same URL list used for the original scrape")
+    pr.add_argument("--jsonl", type=Path, default=Path("cache/entries.jsonl"))
+    pr.add_argument("--concurrency", type=int, default=3, help="Lower default - retries hit a busy server")
+    pr.add_argument("--log-every", type=int, default=200)
+    pr.add_argument("--max-retries", type=int, default=8, help="Higher default to ride out 503 windows")
+    pr.set_defaults(func=cmd_bulk_retry)
 
     pa = sub.add_parser("bulk-audio", help="Async-download all mp3s referenced by a JSONL.")
     pa.add_argument("--jsonl", type=Path, default=Path("cache/entries.jsonl"))
