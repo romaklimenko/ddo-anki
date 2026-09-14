@@ -17,7 +17,51 @@ uv run ddo-anki build words/sample.txt -o out/sample.apkg
 # import out/sample.apkg into Anki: File -> Import
 ```
 
-Re-running with the same wordlist reuses cached HTML in `cache/html/` and mp3s in `cache/audio/` — iteration is fast and ordnet.dk only sees one request per word.
+Re-running with the same wordlist reuses cached HTML in `cache/html/` and mp3s in `cache/audio/` - iteration is fast and ordnet.dk only sees one request per word.
+
+## Danish idioms (1,000 cards)
+
+Build a separate **Danske talemåder** deck from
+[DSL's official dataset of 1,000 Danish idioms and figurative fixed expressions](https://sprogteknologi.dk/dataset/1000-talemader-evalueringsdatasaet).
+Det Danske Sprog- og Litteraturselskab, the publisher of DDO, created this dataset.
+Digitaliseringsstyrelsen publishes the download through sprogteknologi.dk.
+The definitions come from Den Danske Ordbog.
+
+```bash
+uv run ddo-anki talemaader-build
+# Import out/danske-talemaader.apkg into Anki: File -> Import
+```
+
+- **Front:** the Danish expression.
+- **Back:** its Danish definition, a DDO search link, and source/license attribution.
+- **Example:** `koste en bondegård` -> `koste mange penge; være dyr`.
+
+This command downloads one ZIP and reads only `talemaader_leverance_1.csv`.
+Despite the extension, the file is UTF-8 tab-separated text.
+Delivery 2 contains deliberately false definitions for testing language models and is never read.
+The selection includes idioms, proverbs, and other figurative fixed expressions.
+It is not a list of every fixed expression in DDO.
+
+The first run caches the correct-definition file in `cache/talemaader/`.
+Later builds work offline. Use `--refresh` to download the dataset again.
+To build from an existing copy or a subset with the same three columns:
+
+```bash
+uv run ddo-anki talemaader-build --source cache/talemaader/talemaader_leverance_1.csv
+```
+
+The idiom deck has its own Anki deck and note model IDs.
+It contains one card per expression and no audio.
+Notes use the source ID plus expression text as their stable key.
+The published file reuses one ID for two different expressions, so IDs alone would lose a card.
+Re-importing a rebuilt deck updates definitions without resetting reviews when the key is unchanged.
+Editing an expression or its ID creates a new note.
+DDO links search by expression because the dataset's IDs do not reliably resolve to the right current entry.
+
+This dataset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The generated deck credits DSL, links the dataset and license, and states that it was converted to Anki.
+Source wording is preserved. Surrounding whitespace is trimmed and text is escaped for display.
+The separate restrictions on scraped DDO dictionary pages below do not apply to this open dataset.
 
 ## Full corpus (~104K cards)
 
@@ -113,7 +157,22 @@ ddo-anki bulk-scrape  Async-scrape every URL in a list into a JSONL.
 ddo-anki bulk-retry   Re-scrape URLs whose JSONL record is a transient failure.
 ddo-anki bulk-audio   Async-download every mp3 referenced by the JSONL.
 ddo-anki bulk-build   Build one .apkg from a JSONL + audio cache.
+ddo-anki talemaader-build  Build the separate Danish idioms deck.
 ```
+
+### `talemaader-build`
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--source` | official download/cache | local delivery 1 TSV; required columns: `udtryk_id`, `talemaade_udtryk`, `ddo_definition` |
+| `--cache-dir` | `cache/talemaader` | cache for the downloaded correct-definition file |
+| `--refresh` | off | download again; cannot be combined with `--source` |
+| `-o, --out` | `out/danske-talemaader.apkg` | output `.apkg` path |
+| `--deck-name` | `Danske talemåder` | Anki deck name |
+
+Malformed input fails before the output deck is written.
+Identical duplicate rows are collapsed.
+Conflicting definitions for the same ID and expression are rejected.
 
 ### `build` (POC, small wordlists)
 
@@ -228,7 +287,7 @@ Idempotent: each retry pass only touches URLs that are still failing. Run it as 
 
 ## Known limitations
 
-- **Idioms / fixed expressions.** They appear inside an entry as further `match` spans but are not extracted as separate cards yet.
+- **Full DDO idiom extraction.** The word scraper does not extract fixed expressions as separate cards. Use `talemaader-build` for DSL's curated 1,000-expression dataset.
 - **GUID ties to `word_type`.** If DDO ever changes a word's grammatical classification, that entry becomes a *new* note on the next import instead of an updated one. For ~104K entries this is negligible; if you care, swap the GUID basis to DDO's `entry_id`.
 - **Single article per query.** For the small-wordlist `build` mode, DDO returns the primary homonym only. For the full-corpus mode this is a non-issue because the sitemap lists every homonym with `,N` disambiguation.
 - **No fuzzy match.** If a word isn't found on DDO the CLI logs a warning and skips it.
@@ -248,10 +307,13 @@ src/ddo_anki/
   scraper.py       # httpx + BeautifulSoup parser for one DDO entry (sync)
   bulk.py          # async parallel scraper, audio downloader, prune/retry helpers
   deck.py          # genanki note model + .apkg writer
+  talemaader.py     # download/cache and validate DSL's idiom dataset
+  talemaader_deck.py # separate idiom note model and .apkg writer
   cli.py           # ddo-anki command (build, bulk-scrape, bulk-retry, bulk-audio, bulk-build)
 tests/
   test_scraper.py  # parser tests against saved HTML fixtures
   test_bulk.py     # tests for prune_retryable / is_retryable / resume
+  test_talemaader.py # synthetic idiom data, download, and package tests
 fetch_sitemap.py   # one-off helper: pull DDO's XML sitemap, write URL list
 explore.py         # one-off helper: refresh samples/*.html fixtures
 words/             # input word lists (sample.txt tracked; all_urls.txt gitignored)
@@ -268,7 +330,8 @@ logs/              # run logs (gitignored)
 ## Development
 
 ```bash
-uv run -m pytest -q          # parser + bulk-pipeline tests
+uv run -m pytest -q          # word parser, bulk pipeline, and idiom tests
+uv run -m pytest tests/test_talemaader.py -q  # offline idiom tests; no DDO fixtures needed
 uv run python explore.py     # refetch & overwrite samples/*.html
 ```
 
@@ -277,4 +340,7 @@ uv run python explore.py     # refetch & overwrite samples/*.html
 ## License
 
 Source code: MIT.
-Dictionary data: © Det Danske Sprog- og Litteraturselskab — see <https://ordnet.dk/ddo/om/kolofon>. The generated deck is for personal study; don't redistribute it without permission from DSL.
+Scraped dictionary data: © Det Danske Sprog- og Litteraturselskab - see <https://ordnet.dk/ddo/om/kolofon>. The word deck is for personal study; don't redistribute it without permission from DSL.
+
+The separate idiom dataset used by `talemaader-build` is published under CC BY 4.0.
+See [the official dataset page](https://sprogteknologi.dk/dataset/1000-talemader-evalueringsdatasaet) and retain the DSL attribution and license links when sharing that deck.

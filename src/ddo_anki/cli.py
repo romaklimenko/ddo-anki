@@ -5,6 +5,7 @@ Subcommands:
     bulk-scrape   - async-scrape every URL in a list, append entries to a JSONL
     bulk-audio    - async-download all mp3s referenced by the JSONL
     bulk-build    - build one big .apkg from a JSONL + audio cache
+    talemaader-build - build a separate deck from DSL's 1,000 Danish idioms
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+import httpx
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
@@ -26,6 +28,8 @@ from .bulk import (
 )
 from .deck import build_deck
 from .scraper import DdoScraper, Entry
+from .talemaader import fetch_talemaader, load_talemaader
+from .talemaader_deck import build_talemaader_deck
 
 console = Console()
 
@@ -194,6 +198,27 @@ def cmd_bulk_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_talemaader_build(args: argparse.Namespace) -> int:
+    if args.source is not None and not args.source.is_file():
+        console.print(f"Source file not found: {args.source}", style="red", markup=False)
+        return 2
+    try:
+        if args.source is not None:
+            entries = load_talemaader(args.source)
+        else:
+            console.print("Loading DSL's Danish idioms and DDO definitions...")
+            entries = fetch_talemaader(args.cache_dir, refresh=args.refresh)
+        result = build_talemaader_deck(entries, args.out, deck_name=args.deck_name)
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        console.print(f"Could not build idiom deck: {exc}", style="red", markup=False)
+        return 1
+    console.print(
+        f"Wrote {result.apkg} ({result.cards:,} cards).",
+        style="green", markup=False,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ddo-anki", description="Build Anki decks from Den Danske Ordbog")
     sub = p.add_subparsers(dest="cmd", required=False)
@@ -242,6 +267,21 @@ def build_parser() -> argparse.ArgumentParser:
     bb.add_argument("-o", "--out", type=Path, default=Path("out/ddo-full.apkg"))
     bb.add_argument("--deck-name", default="Den Danske Ordbog")
     bb.set_defaults(func=cmd_bulk_build)
+
+    pt = sub.add_parser(
+        "talemaader-build", help="Build a separate deck of DSL's 1,000 Danish idioms."
+    )
+    source_options = pt.add_mutually_exclusive_group()
+    source_options.add_argument(
+        "--source", type=Path, help="Local delivery 1 TSV (.csv); skips downloading"
+    )
+    source_options.add_argument(
+        "--refresh", action="store_true", help="Download the official dataset again"
+    )
+    pt.add_argument("--cache-dir", type=Path, default=Path("cache/talemaader"))
+    pt.add_argument("-o", "--out", type=Path, default=Path("out/danske-talemaader.apkg"))
+    pt.add_argument("--deck-name", default="Danske talemåder")
+    pt.set_defaults(func=cmd_talemaader_build)
 
     return p
 
